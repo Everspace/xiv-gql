@@ -1,0 +1,10 @@
+# Build
+/dist
+/graphqlDefinitions
+
+# Node/lib generated
+/node_modules
+
+# Notes
+/*.txt
+/*.log
