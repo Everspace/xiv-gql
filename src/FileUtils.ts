@@ -1,6 +1,6 @@
-import yaml from "yaml"
-import path from "path"
 import fs from "fs"
+import path from "path"
+import yaml from "yaml"
 
 export const joinalize = (...paths: string[]) => {
   return path.normalize(path.join(...paths))

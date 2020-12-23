@@ -1,17 +1,34 @@
-import { joinalize, loadYaml } from "../src/common"
-import csv from "csv"
+import { joinalize, loadYaml } from "../src/FileUtils"
+import lodash, { fromPairs, zip } from "lodash"
+import path from "path"
 import fs from "fs/promises"
+import { coinachCsvHeaders } from "../src/SaintCoinach"
 
-const result = loadYaml(__dirname, "process.config.yaml")
-const base = result.get("csvLocation") as string
-const csvParse = async <T>(filepath: string, opts?: any) => {
-  const file = await fs.readFile(filepath, { encoding: "utf-8" })
-  return new Promise((resolve, reject) => {
-    //@ts-ignore
-    csv.parse(file, opts, (err, records, info) => {
-      resolve(records)
-    })
-  })
+const config = loadYaml(__dirname, "process.config.yaml").toJSON()
+const base = config.csvLocation
+const renameKeys: Record<string, Record<string, string>> = config?.renameKeys
+
+const applyRenameKeys = (sourceType: string, key: string) => {
+  const mapping = Object.assign(
+    {},
+    renameKeys?.all ?? {},
+    renameKeys[sourceType] ?? {},
+  )
+  if (mapping[key]) return mapping[key]
+  return key
+}
+
+const gqlKeyHasType: Record<string, Record<string, string>> =
+  config?.gqlKeyHasType
+
+const applyGqlKeyHasType = (sourceType: string, key: string, value: string) => {
+  const mapping = Object.assign(
+    {},
+    gqlKeyHasType?.all ?? {},
+    gqlKeyHasType[sourceType] ?? {},
+  )
+  value = mapping[key] ? mapping[key] : value
+  return value
 }
 
 const cleanTypeNames = (s: string) => {
@@ -21,21 +38,53 @@ const cleanTypeNames = (s: string) => {
 
 const doWork = async () => {
   const things = new Set<string>()
-  const files = await (
-    await fs.readdir(joinalize(base), { withFileTypes: true })
-  )
+  fs.mkdir("./graphqlDefinitions", { recursive: true })
+  const dirInfo = await fs.readdir(joinalize(base), { withFileTypes: true })
+  const files = dirInfo
     .filter((f) => f.name.endsWith(".csv"))
     .map((f) => joinalize(base, f.name))
 
   for (const f of files) {
-    const [names, types]: string[][] = (await csvParse(f, {
-      from: 2,
-      to: 3,
-    })) as string[][]
-    types.map(cleanTypeNames).forEach((s) => things.add(s))
-  }
-  const log = await fs.open("./allTypes.txt", "w")
-  await log.writeFile(Array.from(things).sort().join("\n"))
-  await log.close()
+    const { name } = path.parse(f)
+
+    const {
+      columnNames: solvedColumns,
+      columnTypes: types,
+    } = await coinachCsvHeaders(f)
+
+    const uncleanTypes = fromPairs(
+      zip(solvedColumns, types) as [string, string][],
+    )
+
+    const cleanTypes = lodash(uncleanTypes)
+      // TODO: Make this general
+      .mapKeys((_, key) => key.replace(/[{}<>]/g, ""))
+      .mapKeys((_, key) => applyRenameKeys(name, key))
+      .mapValues(cleanTypeNames)
+
+    const targetPath = `./graphqlDefinitions/${name}.graphql`
+    fs.writeFile(
+      targetPath,
+      `type ${name} {
+${cleanTypes
+  .mapKeys((_, key) => lodash.camelCase(key))
+  .toPairs()
+  .map(([key, gqlTypeName]) => {
+    gqlTypeName = applyGqlKeyHasType(name, key, gqlTypeName)
+    return `  ${key}: ${gqlTypeName}`
+  })
+  .sort()
+  .join("\n")}
 }
-doWork()
+`,
+    )
+  }
+}
+
+const main = async () => {
+  console.log("Generating .graphql")
+  await doWork()
+  console.log("Finished generating .graphql")
+}
+
+main()

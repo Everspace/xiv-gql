@@ -1,1 +1,9 @@
 csvLocation: Z:\git\ffxiv-datamining\csv
+
+renameKeys:
+  all:
+    "#": id
+
+gqlKeyHasType:
+  all:
+    id: ID!
