@@ -2,7 +2,7 @@ import { joinalize, loadYaml } from "../src/FileUtils"
 import lodash, { fromPairs, zip } from "lodash"
 import path from "path"
 import fs from "fs/promises"
-import { coinachCsvHeaders } from "../src/SaintCoinach"
+import { coinachCsv } from "../src/SaintCoinach"
 
 const config = loadYaml(__dirname, "process.config.yaml").toJSON()
 const base = config.csvLocation
@@ -31,13 +31,7 @@ const applyGqlKeyHasType = (sourceType: string, key: string, value: string) => {
   return value
 }
 
-const cleanTypeNames = (s: string) => {
-  if (s.startsWith("bit&")) return "bit"
-  return s
-}
-
 const doWork = async () => {
-  const things = new Set<string>()
   fs.mkdir("./graphqlDefinitions", { recursive: true })
   const dirInfo = await fs.readdir(joinalize(base), { withFileTypes: true })
   const files = dirInfo
@@ -50,21 +44,31 @@ const doWork = async () => {
     const {
       columnNames: solvedColumns,
       columnTypes: types,
-    } = await coinachCsvHeaders(f)
+      json: data,
+    } = await coinachCsv(f)
 
     const uncleanTypes = fromPairs(
-      zip(solvedColumns, types) as [string, string][],
+      zip(
+        solvedColumns.map((key) => applyRenameKeys(name, key)),
+        types,
+      ) as [string, string][],
     )
 
-    const cleanTypes = lodash(uncleanTypes)
-      // TODO: Make this general
-      .mapKeys((_, key) => key.replace(/[{}<>]/g, ""))
-      .mapKeys((_, key) => applyRenameKeys(name, key))
-      .mapValues(cleanTypeNames)
+    const cleanJson = lodash(data).mapValues((d) => {
+      return lodash(d)
+        .mapKeys((_, key) => applyRenameKeys(name, key))
+        .value()
+    })
 
-    const targetPath = `./graphqlDefinitions/${name}.graphql`
+    const cleanTypes = lodash(uncleanTypes).mapKeys((_, key) =>
+      applyRenameKeys(name, key),
+    )
+
+    const targetPathGQL = `./graphqlDefinitions/${name}.graphql`
+    const targetPathJSON = `./graphqlDefinitions/${name}.json`
+    fs.writeFile(targetPathJSON, JSON.stringify(cleanJson, null, 2))
     fs.writeFile(
-      targetPath,
+      targetPathGQL,
       `type ${name} {
 ${cleanTypes
   .mapKeys((_, key) => lodash.camelCase(key))
